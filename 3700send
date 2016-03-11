@@ -1,0 +1,166 @@
+#!/usr/bin/python -u
+#
+# CS3700, Spring 2015
+# Project 2 Starter Code
+#
+
+import sys
+import socket
+import time
+import datetime
+import select
+import json
+import datetime
+import signal
+MSG_SIZE = 1500
+DATA_SIZE = 1000
+TIMEOUT = 30
+SEQUENCE = 0
+sent_messages = []
+old_rtt = 3.0
+old_data = {}
+cwnd = 1
+ssthresh = -1
+most_recent_ack = 0
+timer_set = False
+rto = 3
+start_time = 0
+tracked_packet = 0
+
+
+def receive_alarm(signum, stack):
+    log("alarm")
+
+# Call receive_alarm in 2 seconds
+signal.signal(signal.SIGALRM, receive_alarm)
+
+# Bind to localhost and an ephemeral port
+IP_PORT = sys.argv[1]
+UDP_IP = IP_PORT[0:IP_PORT.find(":")]
+UDP_PORT = int(IP_PORT[IP_PORT.find(":")+1:])
+dest = (UDP_IP, UDP_PORT)
+
+# Set up the socket
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) 
+sock.settimeout(TIMEOUT)
+
+def log(string):
+  sys.stderr.write(datetime.datetime.now().strftime("%H:%M:%S.%f") + " " + string + "\n")
+
+def send_next_packet():
+  global SEQUENCE
+  global old_data
+  global cwnd
+  global sent_messages
+  global timer_set
+  global start_time
+  global rto
+  global tracked_packet
+  messages_to_send = int(cwnd) - int(len(sent_messages))
+  while True:
+    #if this is true it is a retransmission
+    if SEQUENCE in old_data:
+      data = old_data[SEQUENCE]
+    else:
+      data = sys.stdin.read(DATA_SIZE)
+      old_data[SEQUENCE] = data
+    if (len(data) > 0):
+      msg = json.dumps({"sequence": SEQUENCE, "data": data, "ack": False, "eof": False})
+      SEQUENCE += len(data)
+      sent_messages.append(SEQUENCE)
+      if sock.sendto(msg, dest) < len(msg):
+        log("[error] unable to fully send packet")
+      else:
+        log("[send data] " + str(SEQUENCE) + " (" + str(len(data)) + ")")
+        messages_to_send = messages_to_send - 1
+        if timer_set == False:
+          tracked_packet = SEQUENCE
+          start_time = datetime.datetime.now()
+          #Per TCP Specification
+          if rto < 1:
+            rto = 1
+          signal.setitimer(signal.ITIMER_REAL, rto, 0)
+          timer_set = True
+      if messages_to_send == 0:
+        break
+    else:
+      return False
+
+# Send first packet
+send_next_packet()
+
+def calculateRTO(old2_rtt, rtt_sample):
+  current_rtt = 0.875 * old2_rtt + 0.125 * rtt_sample
+  return current_rtt
+
+def ack_recieved():
+  global cwnd
+  if ssthresh == -1:
+    cwnd = cwnd + 1
+  elif cwnd < ssthresh:
+    cwnd = cwnd + 1
+  elif cwnd >= ssthresh:
+    cwnd = cwnd + 1/cwnd
+  
+#start timer if it is off
+#stop when data ack'ed 
+# Now read in data, send packets
+while True:
+  try:
+    result = sock.recvfrom(MSG_SIZE)
+  except:
+    #The signal will inherently interrupt the recv call
+    #half the ssthresh
+    rto = rto * 2
+    ssthresh = int(cwnd / 2)
+    cwnd = 1
+    sent_mesages = []
+    SEQUENCE = most_recent_ack
+    send_next_packet()
+    x = open('/home/mattb/project3/temp.txt', 'a')
+    x.write('timing out')
+
+
+
+  if result:
+    (data, addr) = result
+    try:
+      decoded = json.loads(data)
+
+      # If ack matches oldest message stop timer
+      # Else remove from 
+      if decoded['ack'] in sent_messages:
+        if decoded['ack'] == min(sent_messages):
+          most_recent_ack = decoded['ack']
+        if decoded['ack'] == tracked_packet:
+          #take second time point
+          t1 = datetime.datetime.now()
+
+          #get time point difference
+          rttsample = (t1 - start_time).total_seconds()
+          old_rtt = calculateRTO(old_rtt, rttsample)
+          rto = old_rtt * 2
+
+          #stop timer
+          signal.setitimer(signal.ITIMER_REAL, 0, 0)
+          timer_set = False
+        #change cwnd
+        ack_recieved()
+
+        #mark that this segment has been acked
+        sent_messages.remove(int(decoded['ack']))
+        ack = decoded['ack']
+        log("[recv ack] " + str(decoded['ack']))
+
+        # Try to send next packet; break if no more data
+        #Start sending more messages if all acks have been recieved
+        x = send_next_packet()
+        if x == False:
+          sock.sendto(json.dumps({"eof": True, "data": "", "sequence": SEQUENCE, "ack": False}), dest)
+          break
+    except (ValueError, KeyError, TypeError):
+      log("[recv corrupt packet]")
+  else:
+    log("[error] timeout")
+    sys.exit(-1)
+sys.exit(0)

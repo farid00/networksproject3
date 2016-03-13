@@ -26,6 +26,7 @@ timer_set = False
 rto = 3
 start_time = 0
 tracked_packet = 0
+retransmitted = False
 
 
 def receive_alarm(signum, stack):
@@ -111,7 +112,11 @@ while True:
   except:
     #The signal will inherently interrupt the recv call
     #half the ssthresh
+    timer_set = False
+    retransmitted = True
     rto = rto * 2
+    if rto > 3:
+      rto = 3
     ssthresh = int(cwnd / 2)
     cwnd = 1
     sent_mesages = []
@@ -119,7 +124,7 @@ while True:
     send_next_packet()
     x = open('/home/mattb/project3/temp.txt', 'a')
     x.write('timing out')
-
+    continue
 
 
   if result:
@@ -134,14 +139,16 @@ while True:
           most_recent_ack = decoded['ack']
         if decoded['ack'] == tracked_packet:
           #take second time point
-          t1 = datetime.datetime.now()
+          if retransmitted == False:
+            t1 = datetime.datetime.now()
 
           #get time point difference
-          rttsample = (t1 - start_time).total_seconds()
-          old_rtt = calculateRTO(old_rtt, rttsample)
-          rto = old_rtt * 2
+            rttsample = (t1 - start_time).total_seconds()
+            old_rtt = calculateRTO(old_rtt, rttsample)
+            rto = old_rtt * 2
 
           #stop timer
+          retransmitted = False
           signal.setitimer(signal.ITIMER_REAL, 0, 0)
           timer_set = False
         #change cwnd

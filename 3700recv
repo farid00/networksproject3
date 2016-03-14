@@ -43,13 +43,16 @@ while True:
       decoded = json.loads(data)
 
       # If the EOF flag is set, exit
-      if (decoded['eof']):
-        log("[completed]")
-        sys.exit(0)
 
       if (decoded['sequence'] + len(decoded['data']) == ACK + len(decoded['data'])):
         ACK += len(decoded['data'])
       # If there is data, we accept it and print it out
+        if (decoded['eof']):
+          log("[completed]")
+          msg = json.dumps("ack": "fin-ack")
+          sock.sendto(msg, addr)
+          break
+
         if (decoded['data']):
           # If we receive data, we assume it's in-order
           # You will need to do much more here

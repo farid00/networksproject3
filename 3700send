@@ -84,6 +84,8 @@ def send_next_packet():
           timer_set = True
       if messages_to_send == 0:
         break
+    elif (len(data) <= 0 and len(sent_messages) == 0):
+      return True
     else:
       return False
 
@@ -102,6 +104,23 @@ def ack_recieved():
     cwnd = cwnd + 1
   elif cwnd >= ssthresh:
     cwnd = cwnd + 1/cwnd
+
+def end_connection():
+  while True:
+    signal.setitimer(signal.ITIMER_REAL, rto, 0)
+    try:
+      sock.sendto(json.dumps({"eof": True, "data": "", "sequence": SEQUENCE, "ack": False}), dest)
+      result = sock.recvfrom(MSG_SIZE)
+      if result:
+        (data, addr) = result
+        try:
+          decoded = json.loads(data)
+          if decoded['ack'] == "fin-ack":
+            sys.exit(0)
+        except:
+          log('no clue')
+    except:
+      continue
   
 #start timer if it is off
 #stop when data ack'ed 
@@ -122,8 +141,6 @@ while True:
     sent_mesages = []
     SEQUENCE = most_recent_ack
     send_next_packet()
-    x = open('/home/mattb/project3/temp.txt', 'a')
-    x.write('timing out')
     continue
 
 
@@ -163,8 +180,7 @@ while True:
         #Start sending more messages if all acks have been recieved
         x = send_next_packet()
         if x == False:
-          sock.sendto(json.dumps({"eof": True, "data": "", "sequence": SEQUENCE, "ack": False}), dest)
-          break
+          end_connection()
     except (ValueError, KeyError, TypeError):
       log("[recv corrupt packet]")
   else:
